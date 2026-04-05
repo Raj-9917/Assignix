@@ -1,0 +1,115 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+
+  /* Brand palette */
+  --color-brand-50:  #eef2ff;
+  --color-brand-100: #e0e7ff;
+  --color-brand-200: #c7d2fe;
+  --color-brand-300: #a5b4fc;
+  --color-brand-400: #818cf8;
+  --color-brand-500: #6366f1;
+  --color-brand-600: #4f46e5;
+  --color-brand-700: #4338ca;
+  --color-brand-800: #3730a3;
+  --color-brand-900: #312e81;
+
+  /* Surface palette (light) */
+  --color-surface-950: #f8fafc; /* Global BG - Slate 50 */
+  --color-surface-900: #ffffff; /* Card/Surface BG */
+  --color-surface-800: #f1f5f9; /* Soft contrast */
+  --color-surface-700: #e2e8f0; /* Borders/Dividers */
+  --color-surface-600: #94a3b8; /* Muted text/icons */
+  --color-surface-500: #64748b; /* Medium text */
+  --color-surface-400: #334155; /* Secondary text */
+  --color-surface-300: #0f172a; /* Main Headings/Text */
+
+  --color-sidebar: #ffffff;
+  --color-navbar:  #ffffff;
+}
+
+/* ── Global Resets ───────────────────────────────────── */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-surface-700) transparent;
+}
+
+::selection {
+  background: var(--color-brand-600);
+  color: white;
+}
+
+/* ── Utility Classes ─────────────────────────────────── */
+
+.glass {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--color-surface-700);
+}
+
+.glow-brand {
+  box-shadow: 0 0 20px rgba(99, 102, 241, 0.1), 0 0 60px rgba(99, 102, 241, 0.05);
+}
+
+.gradient-text {
+  background: linear-gradient(135deg, var(--color-brand-600), var(--color-brand-800));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ── Animations ──────────────────────────────────────── */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.4s ease-out both;
+}
+
+/* ── Theme Classes ────────────────────────────────────── */
+
+:root.theme-dark {
+  --color-surface-950: #020617; /* Dark Slate BG */
+  --color-surface-900: #0f172a; /* Dark Card BG */
+  --color-surface-800: #1e293b; /* Contrast */
+  --color-surface-700: #334155; /* Dark Borders */
+  --color-surface-600: #64748b; /* Muted text */
+  --color-surface-500: #94a3b8; /* Medium text */
+  --color-surface-400: #cbd5e1; /* Secondary text */
+  --color-surface-300: #f8fafc; /* Main Headings (White) */
+
+  --color-sidebar: #0f172a;
+  --color-navbar:  #0f172a;
+  
+  color-scheme: dark;
+}
+
+:root.theme-high-contrast {
+  --color-surface-950: #000000;
+  --color-surface-900: #000000;
+  --color-surface-800: #1a1a1a;
+  --color-surface-700: #ffff00;
+  --color-surface-600: #ffff00;
+  --color-surface-500: #ffffff;
+  --color-surface-400: #ffffff;
+  --color-surface-300: #ffff00;
+
+  --color-brand-600: #ffff00;
+  --color-brand-500: #ffff00;
+
+  --color-sidebar: #000000;
+  --color-navbar:  #000000;
+  
+  color-scheme: dark;
+}
