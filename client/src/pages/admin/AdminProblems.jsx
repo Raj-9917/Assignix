@@ -10,8 +10,13 @@ import {
   Tag,
   Layers,
   Braces,
-  CheckCircle
+  CheckCircle,
+  MessageSquare,
+  ListChecks,
+  AlertCircle as AlertIcon
 } from 'lucide-react';
+import Editor from '@monaco-editor/react';
+
 import adminService from '../../services/adminService';
 import { problemService } from '../../services/problemService';
 
@@ -38,11 +43,18 @@ export default function AdminPrepare() {
     description: '',
     tags: '',
     starter_code: { javascript: '// Your code here' },
+    test_cases: [
+      { input: '1, 2', expected: '3', isHidden: false },
+      { input: '10, 20', expected: '30', isHidden: true }
+    ],
     is_arena_problem: false,
-    hardness_score: 0,
-    examples: [],
-    constraints: []
+    hardness_score: 50,
+    examples: [
+      { input: '1, 2', output: '3', explanation: '1 + 2 = 3' }
+    ],
+    constraints: ['Input will be positive integers']
   };
+
   const [formData, setFormData] = useState(initialForm);
 
   const fetchProblems = useCallback(async () => {
@@ -457,6 +469,84 @@ export default function AdminPrepare() {
                   placeholder="e.g. Array, String, Two Pointers"
                 />
               </div>
+
+              {/* Starter Code Editor */}
+              <div className="space-y-3 p-6 bg-slate-50 border border-slate-200 rounded-[2rem]">
+                <div className="flex items-center justify-between px-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                    <Braces size={14} className="text-brand-500" /> Starter Code (JS/Default)
+                  </label>
+                </div>
+                <div className="h-64 rounded-2xl overflow-hidden border border-slate-200 shadow-inner">
+                  <Editor
+                    height="100%"
+                    defaultLanguage="javascript"
+                    theme="vs"
+                    value={typeof formData.starter_code === 'string' ? formData.starter_code : formData.starter_code?.javascript || ''}
+                    onChange={(val) => setFormData({
+                      ...formData, 
+                      starter_code: { ...formData.starter_code, javascript: val }
+                    })}
+                    options={{
+                      minimap: { enabled: false },
+                      fontSize: 12,
+                      scrollBeyondLastLine: false,
+                      automaticLayout: true,
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Test Cases (JSON) */}
+              <div className="space-y-3 p-6 bg-slate-50 border border-slate-200 rounded-[2rem]">
+                <div className="flex items-center justify-between px-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                    <ListChecks size={14} className="text-emerald-500" /> Verification Suite (Test Cases JSON)
+                  </label>
+                </div>
+                <textarea 
+                  value={JSON.stringify(formData.test_cases, null, 2)}
+                  onChange={e => {
+                    try {
+                      const parsed = JSON.parse(e.target.value);
+                      setFormData({...formData, test_cases: parsed});
+                    } catch (err) {
+                      // Allow typing invalid JSON temporarily
+                      setFormData({...formData, test_cases_raw: e.target.value});
+                    }
+                  }}
+                  className="w-full px-6 py-4 bg-white border border-slate-200 rounded-2xl text-[10px] font-mono focus:ring-4 focus:ring-brand-500/10 transition-all outline-none h-48 resize-none shadow-inner"
+                  placeholder='[{"input": "...", "expected": "...", "isHidden": false}]'
+                />
+              </div>
+
+              {/* Examples & Constraints (Simple list editor) */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Constraints (New line per item)</label>
+                  <textarea 
+                    value={Array.isArray(formData.constraints) ? formData.constraints.join('\n') : ''}
+                    onChange={e => setFormData({...formData, constraints: e.target.value.split('\n').filter(l => l.trim())})}
+                    className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold focus:ring-4 focus:ring-brand-500/10 transition-all outline-none h-32 resize-none"
+                    placeholder="e.g. 1 <= nums.length <= 10^5"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Examples (Simple JSON Array)</label>
+                  <textarea 
+                    value={JSON.stringify(formData.examples, null, 2)}
+                    onChange={e => {
+                      try {
+                        const parsed = JSON.parse(e.target.value);
+                        setFormData({...formData, examples: parsed});
+                      } catch (err) {}
+                    }}
+                    className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-[10px] font-mono focus:ring-4 focus:ring-brand-500/10 transition-all outline-none h-32 resize-none"
+                    placeholder='[{"input": "...", "output": "...", "explanation": "..."}]'
+                  />
+                </div>
+              </div>
+
 
               <div className="flex gap-4 pt-4 sticky bottom-0 bg-white">
                 <button 

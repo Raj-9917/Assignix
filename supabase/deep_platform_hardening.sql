@@ -48,14 +48,15 @@ REVOKE SELECT (test_cases, starter_code) ON problems FROM authenticated;
 
 -- 2.1 Secure Problem Fetching
 -- Students see only public test cases. Teachers see everything.
-CREATE OR REPLACE FUNCTION get_problem_for_student(p_slug TEXT)
+CREATE OR REPLACE FUNCTION get_problem_for_student(p_id_or_slug TEXT)
 RETURNS JSONB AS $$
 DECLARE
     v_problem JSONB;
 BEGIN
+    -- Support lookup by both slug and UUID id
     SELECT row_to_json(p)::jsonb INTO v_problem
     FROM problems p
-    WHERE p.slug = p_slug;
+    WHERE p.slug = p_id_or_slug OR p.id::text = p_id_or_slug;
 
     IF v_problem IS NULL THEN
         RETURN NULL;
@@ -75,6 +76,7 @@ BEGIN
     RETURN v_problem;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
 
 -- 2.2 Secure XP and Submission Verification
 -- Server determines success and awards XP atomically.
