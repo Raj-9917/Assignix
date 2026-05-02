@@ -68,7 +68,10 @@ BEGIN
         v_problem := v_problem || jsonb_build_object(
             'test_cases', (
                 SELECT jsonb_agg(tc)
-                FROM jsonb_array_elements(v_problem->'test_cases') tc
+                FROM jsonb_array_elements(CASE 
+                    WHEN jsonb_typeof(v_problem->'test_cases') = 'array' THEN v_problem->'test_cases' 
+                    ELSE '[]'::jsonb 
+                END) tc
                 WHERE (tc->>'isHidden')::boolean = false
             )
         );
