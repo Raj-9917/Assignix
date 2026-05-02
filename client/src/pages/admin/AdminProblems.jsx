@@ -145,11 +145,13 @@ export default function AdminPrepare() {
       description: p.description || '',
       tags: p.tags?.join(', ') || '',
       starter_code: p.starter_code || p.starterCode || { javascript: '// Your code here' },
+      test_cases: p.test_cases || p.testCases || [],
       is_arena_problem: p.is_arena_problem || p.isArenaProblem || false,
       hardness_score: p.hardness_score || p.hardnessScore || 0,
       examples: p.examples || [],
       constraints: p.constraints || []
     });
+
     setShowModal(true);
   };
 
