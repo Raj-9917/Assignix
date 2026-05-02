@@ -210,7 +210,7 @@ BEGIN
             (p_data->>'is_approved')::boolean, (p_data->>'is_arena_problem')::boolean, 
             (p_data->>'hardness_score')::integer, 
             (SELECT array_agg(x) FROM jsonb_array_elements_text(p_data->'tags') x),
-            p_data->'examples', p_data->'constraints',
+            p_data->'examples', (SELECT array_agg(x) FROM jsonb_array_elements_text(p_data->'constraints') x),
             auth.uid()
         ) RETURNING row_to_json(problems)::jsonb INTO v_result;
     ELSIF p_op = 'UPDATE' THEN
@@ -228,7 +228,7 @@ BEGIN
             hardness_score = COALESCE((p_data->>'hardness_score')::integer, hardness_score),
             tags = COALESCE((SELECT array_agg(x) FROM jsonb_array_elements_text(p_data->'tags') x), tags),
             examples = COALESCE(p_data->'examples', examples),
-            constraints = COALESCE(p_data->'constraints', constraints),
+            constraints = COALESCE((SELECT array_agg(x) FROM jsonb_array_elements_text(p_data->'constraints') x), constraints),
             updated_at = now()
         WHERE id = p_id
         RETURNING row_to_json(problems)::jsonb INTO v_result;

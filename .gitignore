@@ -7,3 +7,6 @@ build/
 .DS_Store
 lint-results*
 supabase/.temp/
+.vite/
+scratch/
+**/scratch/
