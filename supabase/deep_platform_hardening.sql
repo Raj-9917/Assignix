@@ -48,6 +48,7 @@ REVOKE SELECT (test_cases, starter_code) ON problems FROM authenticated;
 
 -- 2.1 Secure Problem Fetching
 -- Students see only public test cases. Teachers see everything.
+DROP FUNCTION IF EXISTS get_problem_for_student(TEXT);
 CREATE OR REPLACE FUNCTION get_problem_for_student(p_id_or_slug TEXT)
 RETURNS JSONB AS $$
 DECLARE
