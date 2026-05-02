@@ -6,6 +6,7 @@ export default function OutputConsole({ output, isRunning, error, status, metric
 
   useEffect(() => {
     if (error && !output) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setActiveTab('errors')
     }
   }, [error, output])

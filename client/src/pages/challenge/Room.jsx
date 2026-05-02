@@ -1,188 +1,400 @@
-import { useState, useEffect } from 'react'
-import { useParams, Link, Navigate } from 'react-router-dom'
-import { Swords, Clock, Trophy, ChevronLeft, User, Terminal, CheckCircle2, Timer, Zap, Play, Award, ListChecks } from 'lucide-react'
-import { problems } from '../../data/problems'
-import { mockParticipants } from '../../data/challenges'
-import ProblemDetail from '../problems/ProblemDetail'
+import { useState, useEffect, useCallback } from 'react'
+import { useParams, Link } from 'react-router-dom'
+import { Swords, Clock, Trophy, ChevronLeft, Users, Zap, Target, PlayCircle, Loader2, Crown, Medal, Award, RefreshCw, UserPlus, CheckCircle2, AlertCircle, ArrowUpRight, Share2, Copy, Check } from 'lucide-react'
+import PageShell from '../../components/ui/PageShell'
+import { useAuth } from '../../context/AuthContext'
+import { challengeService } from '../../services/challengeService'
+import { useToast } from '../../context/ToastContext'
+import { supabase } from '../../config/supabaseClient'
 
 export default function Room() {
   const { id } = useParams()
-  const [participants, setParticipants] = useState(mockParticipants)
-  const [timeLeft, setTimeLeft] = useState(900) // 15:00 minutes
-  const [matchStarted, setMatchStarted] = useState(false)
+  const { user } = useAuth()
+  const toast = useToast()
+  const [challenge, setChallenge] = useState(null)
+  const [leaderboard, setLeaderboard] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [joining, setJoining] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const [error, setError] = useState(null)
+  const [copied, setCopied] = useState(false)
+  const [timeLeft, setTimeLeft] = useState(null)
 
-  // Find the problem for this room (mock room-101 uses two-sum)
-  const problemId = id === 'room-101' ? 'two-sum' : 'palindrome-number'
-  const problem = problems.find(p => p.id === problemId)
-
-  if (!problem) return <Navigate to="/challenge" replace />
+  const fetchData = useCallback(async () => {
+    try {
+      setLoading(true)
+      const [challengeData, leaderboardData] = await Promise.all([
+        challengeService.getChallengeById(id),
+        challengeService.getLeaderboard(id)
+      ])
+      setChallenge(challengeData)
+      setLeaderboard(leaderboardData)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [id])
 
   useEffect(() => {
-    if (!matchStarted) return
-    const timer = setInterval(() => {
-      setTimeLeft(prev => (prev > 0 ? prev - 1 : 0))
-    }, 1000)
+    if (id) {
+      fetchData()
+
+      const channel = supabase.channel(`room_${id}`)
+        .on('postgres_changes', {
+          event: '*',
+          schema: 'public',
+          table: 'challenge_participants',
+          filter: `challenge_id=eq.${id}`
+        }, () => {
+          fetchData()
+        })
+        .subscribe()
+
+      return () => {
+        supabase.removeChannel(channel)
+      }
+    }
+  }, [id, fetchData])
+
+  useEffect(() => {
+    if (!challenge || challenge.status !== 'active') return
+
+    const calculateTime = () => {
+      const start = new Date(challenge.created_at || challenge.start_date).getTime()
+      const limit = (challenge.time_limit || 30) * 60 * 1000
+      const now = new Date().getTime()
+      const diff = (start + limit) - now
+
+      if (diff <= 0) {
+        setTimeLeft(0)
+        return
+      }
+      setTimeLeft(Math.floor(diff / 1000))
+    }
+
+    calculateTime()
+    const timer = setInterval(calculateTime, 1000)
     return () => clearInterval(timer)
-  }, [matchStarted])
+  }, [challenge])
 
-  // Simulate opponent activity
-  useEffect(() => {
-    if (!matchStarted) return
-    const interval = setInterval(() => {
-      setParticipants(prev => prev.map(p => {
-        if (p.id === 'u1' && timeLeft < 850 && p.status === 'Coding') {
-          return { ...p, status: 'Running Tests', progress: 40 }
-        }
-        if (p.id === 'u2' && timeLeft < 820 && p.status === 'Running Tests') {
-          return { ...p, status: 'Solved', progress: 100, time: '02:45' }
-        }
-        return p
-      }))
-    }, 5000)
-    return () => clearInterval(interval)
-  }, [matchStarted, timeLeft])
+  const formatCountdown = (totalSeconds) => {
+    if (totalSeconds === null) return 'Calculating...'
+    if (totalSeconds <= 0) return 'MATCH CLOSED'
+    const h = Math.floor(totalSeconds / 3600)
+    const m = Math.floor((totalSeconds % 3600) / 60)
+    const s = totalSeconds % 60
+    return `${h > 0 ? h + 'h ' : ''}${m}m ${s}s`
+  }
+
+  const handleRefresh = async () => {
+    setRefreshing(true)
+    try {
+      const leaderboardData = await challengeService.getLeaderboard(id)
+      setLeaderboard(leaderboardData)
+    } catch (err) {
+      console.error('Refresh failed:', err)
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  const handleJoin = async () => {
+    try {
+      setJoining(true)
+      await challengeService.joinChallenge(id)
+      await fetchData()
+      toast.success('Success! You have joined the challenge.')
+    } catch (err) {
+      toast.error(err.message || 'Failed to join challenge')
+    } finally {
+      setJoining(false)
+    }
+  }
+
+  const copyToClipboard = () => {
+    if (!challenge?.room_code) return
+    navigator.clipboard.writeText(challenge.room_code)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  const hasJoined = challenge?.participants?.some(
+    p => (p.users?.id || p.user_id) === user?.id
+  )
+
+  const myParticipant = challenge?.participants?.find(
+    p => (p.users?.id || p.user_id) === user?.id
+  )
+
+  const getDifficultyColor = (d) => {
+    if (d === 'Easy') return 'text-emerald-700 border-emerald-200 bg-emerald-50'
+    if (d === 'Medium') return 'text-amber-700 border-amber-200 bg-amber-50'
+    return 'text-rose-700 border-rose-200 bg-rose-50'
+  }
+
+  const getRankIcon = (rank) => {
+    if (rank === 1) return <Crown size={20} className="text-amber-500" strokeWidth={2.5} />
+    if (rank === 2) return <Medal size={20} className="text-slate-400" strokeWidth={2.5} />
+    if (rank === 3) return <Award size={20} className="text-amber-700" strokeWidth={2.5} />
+    return <span className="text-sm font-black text-surface-500 w-5 text-center">{rank}</span>
+  }
 
   const formatTime = (seconds) => {
+    if (!seconds) return '—'
     const m = Math.floor(seconds / 60)
     const s = seconds % 60
-    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+    if (m > 0) return `${m}m ${s}s`
+    return `${s}s`
+  }
+
+  if (loading) {
+    return (
+      <PageShell title="Loading..." icon={Swords}>
+        <div className="flex flex-col items-center justify-center py-20 gap-4">
+          <Loader2 size={48} className="animate-spin text-brand-600" />
+          <p className="text-[10px] font-black text-surface-500 uppercase tracking-widest">Loading challenge...</p>
+        </div>
+      </PageShell>
+    )
+  }
+
+  if (error || !challenge) {
+    return (
+      <PageShell title="Error" icon={Swords}>
+        <div className="py-20 text-center space-y-4">
+          <AlertCircle size={48} className="mx-auto text-rose-500" />
+          <p className="text-sm text-rose-500 font-bold">{error || 'Challenge not found.'}</p>
+          <Link to="/challenge" className="inline-block text-brand-600 text-xs font-bold uppercase tracking-widest hover:underline">← Back to Challenges</Link>
+        </div>
+      </PageShell>
+    )
   }
 
   return (
-    <div className="flex flex-col h-screen bg-slate-50 overflow-hidden">
-      {/* High-Impact Battle Header */}
-      <header className="h-20 flex items-center justify-between px-8 bg-white border-b border-surface-700 z-50 shadow-sm relative">
-         <div className="flex items-center gap-8">
-            <Link to="/challenge" className="p-3 rounded-2xl bg-white text-surface-500 hover:text-brand-600 border border-surface-700 transition-all hover:-translate-x-1 shadow-sm">
-               <ChevronLeft size={20} strokeWidth={2.5} />
-            </Link>
-            <div className="flex flex-col">
-               <div className="flex items-center gap-3">
-                  <span className="text-[10px] font-black text-brand-600 uppercase tracking-[0.2em] leading-none">Room ID: {id}</span>
-                  <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.4)]" />
-               </div>
-               <h3 className="text-lg font-black text-surface-300 uppercase tracking-tight">{problem.title}</h3>
-            </div>
-         </div>
+    <PageShell
+      title={challenge.title}
+      subtitle={challenge.is_private ? `Private Match created by ${challenge.created_by?.name}` : `Global Challenge by ${challenge.created_by?.name || 'Admin'}`}
+      icon={Swords}
+      breadcrumbs={[
+        { label: 'Challenge Hub', path: '/challenge' },
+        { label: challenge.title }
+      ]}
+    >
+      <div className="space-y-10 pb-20">
+        {/* Breadcrumb */}
+        <Link to="/challenge" className="flex items-center gap-2 text-surface-500 hover:text-brand-400 transition-colors group w-fit">
+          <ChevronLeft size={18} className="group-hover:-translate-x-1 transition-transform" />
+          <span className="text-xs font-bold uppercase tracking-widest leading-none">Challenge Hub</span>
+        </Link>
 
-         {/* Centered Timer HUD */}
-         <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-6 px-10 py-3 rounded-full bg-white border border-surface-700 shadow-xl shadow-brand-500/5 group">
-            <div className="flex items-center gap-3 text-brand-600">
-               <Clock size={20} className="group-hover:rotate-12 transition-transform" strokeWidth={2.5} />
-               <span className="text-2xl font-black tabular-nums tracking-tighter">
-                  {formatTime(timeLeft)}
-               </span>
-            </div>
-            <div className="h-6 w-[1px] bg-surface-700" />
-            <span className="text-[10px] font-black text-surface-500 uppercase tracking-[0.2em]">Time Left</span>
-         </div>
-
-         <div className="flex items-center gap-4">
-            {!matchStarted ? (
-                <button 
-                   onClick={() => setMatchStarted(true)}
-                   className="flex items-center gap-3 px-8 py-3.5 rounded-2xl bg-emerald-600 text-white text-[10px] font-black uppercase tracking-[0.2em] hover:bg-emerald-500 shadow-xl shadow-emerald-500/20 active:scale-95 transition-all"
-                >
-                    Start Challenge
-                </button>
-             ) : (
-                <div className="flex items-center gap-3 px-8 py-3.5 rounded-2xl bg-brand-50 border border-brand-100 text-brand-600 text-[10px] font-black uppercase tracking-[0.2em] shadow-sm">
-                   <Zap size={18} fill="currentColor" strokeWidth={2.5} /> Active Match
+        {/* Private Room Invite Header (if private) */}
+        {challenge.is_private && (
+          <div className="flex flex-col md:flex-row items-center justify-between p-8 rounded-[2.5rem] bg-brand-600 shadow-xl shadow-brand-500/10 gap-6">
+             <div className="flex items-center gap-6">
+                <div className="w-14 h-14 rounded-2xl bg-white/10 flex items-center justify-center text-white shrink-0">
+                   <Share2 size={28} />
                 </div>
-            )}
-         </div>
-      </header>
+                <div className="text-white">
+                   <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-80">Invite your friends</p>
+                   <h4 className="text-xl font-black uppercase tracking-tight">Private Room Active</h4>
+                </div>
+             </div>
+             <div className="flex items-center gap-4 bg-white/10 p-2 rounded-2xl border border-white/20">
+                <div className="px-6 py-2.5">
+                    <p className="text-[9px] font-black text-white/60 uppercase tracking-widest">Room Code</p>
+                   <p className="text-lg font-black text-white tracking-[0.3em]">{challenge.room_code}</p>
+                </div>
+                <button 
+                  onClick={copyToClipboard}
+                  className="p-4 rounded-xl bg-white text-brand-600 hover:bg-slate-50 transition-all flex items-center gap-2"
+                >
+                   {copied ? <Check size={18} strokeWidth={3} /> : <Copy size={18} strokeWidth={3} />}
+                   <span className="text-[10px] font-black uppercase tracking-widest">{copied ? 'Copied!' : 'Copy Code'}</span>
+                </button>
+             </div>
+          </div>
+        )}
 
-      {/* Main Duel View: Dual-Pane Scoreboard + IDE */}
-      <div className="flex flex-1 overflow-hidden">
-         {/* Live Scoreboard Sidebar */}
-         <aside className="w-80 bg-white border-r border-surface-700 flex flex-col p-6 space-y-6 shadow-sm relative z-40 overflow-y-auto no-scrollbar">
-            <div className="flex items-center justify-between border-b border-surface-700 pb-5">
-               <h4 className="text-[10px] font-black text-surface-300 uppercase tracking-[0.2em] flex items-center gap-3">
-                  <Award size={18} className="text-brand-600" strokeWidth={2.5} /> Leaderboard
-               </h4>
-               <span className="text-[9px] font-black text-surface-500 uppercase tracking-widest opacity-60">4 People Online</span>
+        {/* Challenge Info Header */}
+        <div className="p-6 sm:p-10 rounded-[2rem] sm:rounded-[3.5rem] bg-white border border-surface-700 shadow-sm relative overflow-hidden group">
+          <div className="absolute top-0 right-0 p-16 opacity-[0.03] group-hover:opacity-[0.06] transition-all duration-1000 rotate-12">
+            <Trophy size={180} className="text-brand-600" strokeWidth={2} />
+          </div>
+
+          <div className="relative z-10 flex flex-col md:flex-row items-start gap-10">
+            <div className="w-24 h-24 rounded-[2rem] bg-brand-50 border border-brand-100 flex items-center justify-center text-brand-600 shadow-xl shadow-brand-500/10 shrink-0">
+              <Swords size={48} strokeWidth={2} />
             </div>
 
-            <div className="space-y-5">
-               {participants.map((p, idx) => (
-                  <div key={p.id} className="p-6 rounded-[2rem] bg-slate-50 border border-surface-700 hover:border-brand-500/30 group transition-all shadow-inner relative overflow-hidden">
-                     {/* Visual rank accent */}
-                     {idx === 0 && <div className="absolute top-0 right-0 w-8 h-8 bg-brand-600/5 rotate-45 translate-x-4 -translate-y-4" />}
-                     
-                     <div className="flex items-center justify-between mb-5">
-                        <div className="flex items-center gap-4">
-                           <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm border shadow-sm ${
-                              idx === 0 ? 'bg-brand-600 text-white border-brand-500 shadow-brand-500/20' : 'bg-white text-surface-300 border-surface-700 shadow-sm'
-                           }`}>
-                              {idx + 1}
-                           </div>
-                           <div className="flex flex-col">
-                              <span className="text-xs font-black text-surface-300 uppercase tracking-tight">{p.name}</span>
-                              <span className={`text-[9px] font-black uppercase tracking-[0.2em] ${
-                                 p.status === 'Solved' ? 'text-emerald-600' : p.status === 'Running Tests' ? 'text-brand-600' : 'text-surface-500 opacity-60'
-                              }`}>
-                                 {p.status}
-                              </span>
-                           </div>
-                        </div>
-                        {p.status === 'Solved' && <CheckCircle2 size={18} className="text-emerald-600" strokeWidth={3} />}
-                     </div>
+            <div className="flex-1 space-y-6">
+              <div className="space-y-3">
+                <div className="flex items-center gap-4 flex-wrap">
+                  {challenge.is_private && (
+                    <span className="text-[9px] font-black uppercase tracking-widest px-4 py-1.5 rounded-full border border-brand-200 bg-brand-50 text-brand-600 flex items-center gap-2">
+                       <Zap size={12} fill="currentColor" /> Private Match
+                    </span>
+                  )}
+                  <span className={`text-[9px] font-black uppercase tracking-widest px-4 py-1.5 rounded-full border ${getDifficultyColor(challenge.difficulty)}`}>
+                    {challenge.difficulty}
+                  </span>
+                  <span className={`text-[9px] font-black uppercase tracking-widest px-4 py-1.5 rounded-full border ${
+                    challenge.status === 'active' ? 'text-emerald-600 bg-emerald-50 border-emerald-200' : 'text-surface-500 bg-surface-100 border-surface-300'
+                  }`}>
+                    <span className="inline-block w-2 h-2 rounded-full bg-current mr-2 animate-pulse" />
+                    {challenge.status}
+                  </span>
+                </div>
+                <h2 className="text-xl sm:text-3xl font-black text-surface-300 uppercase tracking-tight">{challenge.title}</h2>
+                {challenge.description && (
+                  <p className="text-sm text-surface-500 font-medium max-w-2xl">{challenge.description}</p>
+                )}
+              </div>
 
-                     {/* Progress Visual */}
-                     <div className="space-y-2">
-                        <div className="h-2 w-full bg-white rounded-full overflow-hidden border border-surface-700 p-0.5">
-                           <div 
-                              className={`h-full rounded-full transition-all duration-1000 shadow-lg ${
-                                 p.status === 'Solved' ? 'bg-emerald-500 shadow-emerald-500/20' : 'bg-brand-500 shadow-brand-500/20'
-                              }`} 
-                              style={{ width: `${p.progress}%` }}
-                           />
-                        </div>
-                        <div className="flex justify-between items-center text-[8px] font-black text-surface-500 uppercase tracking-[0.2em]">
-                           <span>{p.progress}% Completed</span>
-                           {p.time && <span className="text-emerald-600 font-bold">{p.time}s</span>}
-                        </div>
-                     </div>
+              <div className="flex flex-wrap items-center gap-4 sm:gap-8 text-[10px] font-black text-surface-500 uppercase tracking-widest">
+                <span className="flex items-center gap-2"><Users size={16} className="text-brand-600" />{challenge.participants?.length || 0} Participants</span>
+                <div className="flex items-center gap-3 px-4 py-2 bg-slate-900 rounded-xl border border-surface-700">
+                  <Clock size={16} className={timeLeft < 300 ? 'text-rose-500 animate-pulse' : 'text-brand-600'} />
+                  <span className={timeLeft < 300 ? 'text-rose-500 font-black' : 'text-slate-200'}>
+                    {formatCountdown(timeLeft)}
+                  </span>
+                </div>
+                <span className="flex items-center gap-2"><Target size={16} className="text-brand-600" />{challenge.problem_ids?.length || 0} {challenge.problem_ids?.length === 1 ? 'Problem' : 'Problems'}</span>
+              </div>
+
+              {/* Join / Status */}
+              <div className="flex items-center gap-4 pt-2">
+                {hasJoined ? (
+                  <div className="flex items-center gap-3 px-8 py-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-black uppercase tracking-widest">
+                    <CheckCircle2 size={18} strokeWidth={3} /> You're In! Score: {myParticipant?.score || 0} pts
                   </div>
-               ))}
+                ) : (
+                  <button
+                    onClick={handleJoin}
+                    disabled={joining}
+                    className="flex items-center gap-3 px-10 py-4 rounded-2xl bg-brand-600 text-white text-[10px] font-black uppercase tracking-widest shadow-xl shadow-brand-500/20 hover:bg-brand-500 active:scale-95 transition-all disabled:opacity-50"
+                  >
+                    {joining ? <Loader2 size={16} className="animate-spin" /> : <UserPlus size={18} strokeWidth={2.5} />}
+                    {joining ? 'Joining...' : 'Join Room'}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Two Column Layout */}
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 lg:gap-10">
+          <div className="lg:col-span-2 space-y-6">
+            <h3 className="text-sm font-black text-surface-400 uppercase tracking-widest flex items-center gap-3">
+              <Target size={18} className="text-brand-500" /> Challenge Problems
+            </h3>
+            <div className="space-y-4">
+               {(challenge.problems_details || []).map((problem, idx) => (
+                <Link
+                  key={problem.id}
+                  to={`/prepare/${problem.id}?arenaId=${challenge.id}`}
+                  className="flex items-center gap-5 p-6 rounded-[2rem] bg-white border border-surface-700 hover:border-brand-500/30 transition-all group shadow-sm hover:shadow-xl hover:shadow-brand-500/5"
+                >
+                  <div className="w-12 h-12 rounded-2xl bg-surface-800 border border-surface-700 flex items-center justify-center text-surface-400 font-black text-lg group-hover:bg-brand-600 group-hover:text-white group-hover:border-transparent transition-all duration-500">
+                    {idx + 1}
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-black text-surface-300 uppercase tracking-tight group-hover:text-brand-500 transition-colors">{problem.title}</p>
+                    <p className="text-[10px] font-bold text-surface-500 uppercase tracking-widest">{problem.category}</p>
+                  </div>
+                  <span className={`text-[9px] font-black uppercase tracking-widest px-3 py-1 rounded-full border ${getDifficultyColor(problem.difficulty)}`}>
+                    {problem.difficulty}
+                  </span>
+                  <ArrowUpRight size={18} className="text-surface-600 group-hover:text-brand-500 transition-colors" />
+                </Link>
+              ))}
+            </div>
+          </div>
+
+          <div className="lg:col-span-3 space-y-6">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-black text-surface-400 uppercase tracking-widest flex items-center gap-3">
+                <Trophy size={18} className="text-amber-500" /> Live Leaderboard
+              </h3>
+              <button
+                onClick={handleRefresh}
+                disabled={refreshing}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-surface-900 border border-surface-800 text-surface-500 text-[10px] font-black uppercase tracking-widest hover:text-brand-400 hover:border-brand-500/30 transition-all disabled:opacity-50"
+              >
+                <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} /> Refresh
+              </button>
             </div>
 
-            <div className="mt-auto p-6 rounded-[2rem] bg-brand-50 border border-brand-100 shadow-sm">
-               <div className="flex items-center gap-4 text-brand-600">
-                  <Terminal size={22} strokeWidth={2.5} />
-                  <div className="flex flex-col">
-                     <span className="text-[9px] font-black uppercase tracking-widest opacity-60">Your Status</span>
-                     <span className="text-xl font-black italic tracking-tighter">READY TO START</span>
-                  </div>
-               </div>
-            </div>
-         </aside>
+            <div className="rounded-[2rem] sm:rounded-[3rem] bg-white border border-surface-700 overflow-hidden shadow-sm">
+              <div className="grid grid-cols-12 gap-2 sm:gap-4 px-4 sm:px-8 py-4 sm:py-5 bg-slate-50 border-b border-surface-700">
+                <span className="col-span-1 text-[9px] font-black text-surface-500 uppercase tracking-widest">#</span>
+                <span className="col-span-4 sm:col-span-4 text-[9px] font-black text-surface-500 uppercase tracking-widest">Player</span>
+                <span className="col-span-3 sm:col-span-2 text-[9px] font-black text-surface-500 uppercase tracking-widest text-center">Score</span>
+                <span className="col-span-2 text-[9px] font-black text-surface-500 uppercase tracking-widest text-center hidden sm:block">Solved</span>
+                <span className="col-span-4 sm:col-span-3 text-[9px] font-black text-surface-500 uppercase tracking-widest text-right">Time</span>
+              </div>
 
-         {/* Integrated Problem Detail (IDE) */}
-         <div className="flex-1 overflow-hidden relative">
-            {!matchStarted && (
-               <div className="absolute inset-0 z-50 bg-white/90 backdrop-blur-md flex items-center justify-center">
-                  <div className="text-center space-y-8 max-w-md p-12">
-                     <div className="w-24 h-24 rounded-[2rem] bg-brand-50 border border-brand-100 mx-auto flex items-center justify-center text-brand-600 shadow-xl shadow-brand-500/10 animate-bounce-slow">
-                        <Swords size={48} strokeWidth={2.5} />
-                     </div>
-                     <div className="space-y-3">
-                        <h4 className="text-3xl font-black text-surface-300 uppercase tracking-tighter">Enter Match</h4>
-                        <p className="text-sm font-bold text-surface-500 uppercase tracking-widest opacity-60 leading-relaxed italic">The challenge starts when you are ready. Write your best solution to win.</p>
-                     </div>
-                     <button 
-                        onClick={() => setMatchStarted(true)}
-                        className="w-full px-10 py-5 rounded-2xl bg-brand-600 text-white text-[11px] font-black uppercase tracking-[0.2em] shadow-2xl shadow-brand-500/20 hover:bg-brand-500 hover:-translate-y-1 active:scale-95 transition-all"
-                     >
-                        Start Coding
-                     </button>
-                  </div>
-               </div>
-            )}
-            <ProblemDetail challengeRoomId={id} />
-         </div>
+              {leaderboard?.leaderboard?.length > 0 ? (
+                <div className="divide-y divide-surface-700/50">
+                  {leaderboard.leaderboard.map((entry) => {
+                    const isMe = entry.user?.id === user?.id
+                    return (
+                      <div
+                        key={entry.user?.id || entry.rank}
+                        className={`grid grid-cols-12 gap-2 sm:gap-4 px-4 sm:px-8 py-4 sm:py-5 items-center transition-colors ${
+                          isMe ? 'bg-brand-50/50' : 'hover:bg-slate-50'
+                        } ${entry.rank <= 3 ? 'font-bold' : ''}`}
+                      >
+                        <div className="col-span-1 flex items-center">
+                          {getRankIcon(entry.rank)}
+                        </div>
+                        <div className="col-span-4 sm:col-span-4 flex items-center gap-2 sm:gap-3 min-w-0">
+                          <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl flex items-center justify-center text-xs sm:text-sm font-black border shadow-sm ${
+                            entry.rank === 1 ? 'bg-amber-500 text-white border-amber-400 shadow-amber-500/20' :
+                            entry.rank === 2 ? 'bg-slate-300 text-white border-slate-300' :
+                            entry.rank === 3 ? 'bg-amber-700 text-white border-amber-600' :
+                            'bg-surface-800 text-surface-400 border-surface-700'
+                          }`}>
+                            {entry.user?.name?.charAt(0) || '?'}
+                          </div>
+                          <div className="min-w-0">
+                            <p className={`text-xs sm:text-sm font-black uppercase tracking-tight truncate ${isMe ? 'text-brand-600' : 'text-surface-300'}`}>
+                              {entry.user?.name || 'Unknown'} {isMe && <span className="text-[8px] text-brand-500 normal-case">(You)</span>}
+                            </p>
+                            <p className="text-[9px] font-bold text-surface-500 lowercase truncate hidden sm:block">@{entry.user?.username || '—'}</p>
+                          </div>
+                        </div>
+                        <div className="col-span-3 sm:col-span-2 text-center">
+                          <span className={`text-base sm:text-lg font-black ${entry.rank <= 3 ? 'text-brand-600' : 'text-surface-300'}`}>
+                            {entry.score}
+                          </span>
+                          <p className="text-[8px] font-black text-surface-500 uppercase tracking-widest">pts</p>
+                        </div>
+                        <div className="col-span-2 text-center hidden sm:block">
+                          <span className="text-sm font-black text-surface-400">
+                            {entry.solved_count}/{leaderboard.totalProblems}
+                          </span>
+                        </div>
+                        <div className="col-span-4 sm:col-span-3 text-right">
+                          <span className="text-sm font-bold text-surface-500 tabular-nums">
+                            {formatTime(entry.total_time)}
+                          </span>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : (
+                <div className="py-16 text-center space-y-3">
+                  <Trophy size={40} className="mx-auto text-surface-700" strokeWidth={1} />
+                  <p className="text-[10px] font-black text-surface-500 uppercase tracking-widest italic">No participants yet. Share the code to invite friends!</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
-    </div>
+    </PageShell>
   )
 }

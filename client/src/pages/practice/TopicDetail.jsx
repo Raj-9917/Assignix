@@ -1,33 +1,64 @@
 import { useState, useEffect } from 'react'
 import { useParams, Link, Navigate } from 'react-router-dom'
-import { Dumbbell, ChevronLeft, Target, Award, ListChecks, PlayCircle, Star } from 'lucide-react'
+import { Swords, ChevronLeft, Target, Award, ListChecks, PlayCircle, Star } from 'lucide-react'
 import PageShell from '../../components/ui/PageShell'
+import { useAuth } from '../../context/AuthContext'
 import ProblemCard from '../../components/problems/ProblemCard'
-import { problems } from '../../data/problems'
+import { problemService } from '../../services/problemService'
+import adminService from '../../services/adminService'
+import { useToast } from '../../context/ToastContext'
 
 export default function TopicDetail() {
   const { topic } = useParams()
-  const [solvedProblems, setSolvedProblems] = useState([])
+  const { user } = useAuth()
+  const toast = useToast()
+  const [problems, setProblems] = useState([])
+  const [solved_problems, setSolved_problems] = useState([])
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const solved = JSON.parse(localStorage.getItem('solved_problems') || '[]')
-    setSolvedProblems(solved)
-  }, [])
+    const fetchTopicData = async () => {
+      try {
+        setLoading(true)
+        const allProblems = await problemService.getAllProblems()
+        
+        // Filter by practice qualified and category
+        const filtered = allProblems.filter(p => 
+          p.is_practice !== false && 
+          p.category.toLowerCase() === topic?.toLowerCase()
+        )
+        setProblems(filtered)
+        setSolved_problems(user?.solved_problems || [])
+      } catch (err) {
+        console.error('Failed to sync Topic Hub:', err)
+      } finally {
+        setLoading(false)
+      }
+    }
+    fetchTopicData()
+  }, [topic])
 
-  // Find all problems in this category (case-insensitive)
-  const topicProblems = problems.filter(p => p.category.toLowerCase() === topic?.toLowerCase())
+  const handleDelete = async (id) => {
+    if (window.confirm('Delete this problem permanently?')) {
+      try {
+        await adminService.deleteProblem(id);
+        setProblems(prev => prev.filter(p => p.id !== id));
+        toast.success('Problem deleted successfully');
+      } catch (err) {
+        toast.error('Failed to delete problem');
+      }
+    }
+  };
 
-  if (topicProblems.length === 0) return <Navigate to="/practice" replace />
-
-  const total = topicProblems.length
-  const solvedCount = topicProblems.filter(p => solvedProblems.includes(p.id)).length
-  const progress = Math.round((solvedCount / total) * 100)
+  const total = problems.length
+  const solvedCount = problems.filter(p => (solved_problems || []).includes(p.id)).length
+  const progress = total > 0 ? Math.round((solvedCount / total) * 100) : 0
 
   return (
     <PageShell
-      title={`${topic.charAt(0).toUpperCase() + topic.slice(1)} Drills`}
-      subtitle={`Focus your training on essential ${topic.toLowerCase()} algorithms.`}
-      icon={Dumbbell}
+      title={`${topic.charAt(0).toUpperCase() + topic.slice(1)} Mastery`}
+      subtitle={`Focus your training on essential ${topic.toLowerCase()} combat maneuvers.`}
+      icon={Swords}
     >
       <div className="space-y-8">
         {/* Topic Header & Progress Summary */}
@@ -70,11 +101,11 @@ export default function TopicDetail() {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {topicProblems.map((problem) => {
-               const isSolved = solvedProblems.includes(problem.id)
+            {problems.map((problem) => {
+               const isSolved = (solved_problems || []).includes(problem.id)
                return (
                   <div key={problem.id} className="group relative">
-                     <ProblemCard problem={problem} />
+                     <ProblemCard problem={problem} onDelete={handleDelete} />
                      {isSolved && (
                         <div className="absolute top-4 right-4 bg-emerald-500/20 text-emerald-400 px-2.5 py-1 rounded-lg border border-emerald-500/30 text-[10px] font-black uppercase tracking-widest z-10 flex items-center gap-1.5 pointer-events-none group-hover:scale-105 transition-all">
                            <Award size={12} fill="currentColor" /> Mastered

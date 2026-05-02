@@ -1,14 +1,15 @@
 import { useState, useEffect } from 'react'
-import { Users, X, PlayCircle, Trophy, Circle, MoreHorizontal, Search, UserPlus, Check } from 'lucide-react'
+import { Users, X, PlayCircle, Trophy, Circle, MoreHorizontal, Search, UserPlus } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
-import API_URL from '../../config/api'
+import { supabase } from '../../config/supabaseClient'
 
 export default function FriendsPanel({ isOpen, onClose }) {
-  const { friends, token, addFriend } = useAuth()
+  const { user, friends, sendFriendRequest, friendRequests } = useAuth()
   const [activeInvite, setActiveInvite] = useState(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState([])
-  const [isSearching, setIsSearching] = useState(false)
+  const [discoveryResults, setDiscoveryResults] = useState([])
+  const [isLoading, setIsLoading] = useState(false)
   const [view, setView] = useState('Online') // Online, All, Discovery
 
   const getStatusColor = (status) => {
@@ -24,40 +25,72 @@ export default function FriendsPanel({ isOpen, onClose }) {
     setTimeout(() => setActiveInvite(null), 2000);
   };
 
-  // Mock user discovery logic (in real app, this calls /api/auth/search)
+  // Fetch Discovery Users (Suggestions)
+  useEffect(() => {
+    const fetchDiscovery = async () => {
+      if (view !== 'Discovery' || searchQuery.length > 0) return;
+      setIsLoading(true);
+      try {
+        const friendIds = (friends || []).map(f => f.id);
+        const excludeIds = [user?.id, ...friendIds].filter(Boolean);
+        
+        let query = supabase.from('users').select('*');
+        if (excludeIds.length > 0) {
+          query = query.not('id', 'in', `(${excludeIds.join(',')})`);
+        }
+        
+        const { data, error } = await query.limit(10);
+        if (error) throw error;
+        setDiscoveryResults(data || []);
+      } catch (err) {
+        console.error('Discovery fetch failed:', err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchDiscovery();
+  }, [view, searchQuery, friends, user]);
+
+  // Search logic
   useEffect(() => {
     const searchPeers = async () => {
-      if (searchQuery.length < 2) {
+      if (searchQuery.length < 1) {
         setSearchResults([]);
         return;
       }
-      if (!token) return;
-      setIsSearching(true);
+      setIsLoading(true);
       try {
-        const response = await fetch(`${API_URL}/auth/search?query=${searchQuery}`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (response.ok) {
-          const data = await response.json();
-          const results = Array.isArray(data) ? data : [];
-          // Filter out existing friends and self
-          setSearchResults(results.filter(u => !(friends || []).some(f => f._id === u._id)));
-        }
-      } catch (error) {
-        console.error('Search failed:', error);
+        const { data, error } = await supabase
+          .from('users')
+          .select('*')
+          .or(`username.ilike.%${searchQuery}%,name.ilike.%${searchQuery}%`)
+          .limit(10);
+          
+        if (error) throw error;
+        
+        // Filter out existing friends and self
+        const results = data || [];
+        setSearchResults(results.filter(u => 
+          u.id !== (user?.id) && 
+          !(friends || []).some(f => f.id === u.id)
+        ));
+      } catch (err) {
+        console.error('Search failed:', err);
       } finally {
-        setIsSearching(false);
+        setIsLoading(false);
       }
     };
 
-    const timer = setTimeout(searchPeers, 300);
+    const timer = setTimeout(searchPeers, 400);
     return () => clearTimeout(timer);
-  }, [searchQuery, friends, token, setIsSearching]);
+  }, [searchQuery, friends, user]);
 
   const handleAddFriend = async (userId) => {
-    const result = await addFriend(userId);
+    const result = await sendFriendRequest(userId);
     if (result.success) {
-      setSearchResults(prev => prev.filter(u => u._id !== userId));
+      // Refresh user data is handled by sendFriendRequest calling fetchUserProfile in real scenario, 
+      // but here we just update UI state for immediate feedback
+      setSearchResults(prev => prev.map(u => u.id === userId ? { ...u, requestSent: true } : u));
     }
   };
 
@@ -114,44 +147,86 @@ export default function FriendsPanel({ isOpen, onClose }) {
                 />
              </div>
 
-             <div className="space-y-2">
-                {isSearching ? (
-                  <div className="text-center py-8">
-                     <div className="w-6 h-6 border-2 border-brand-600 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-                     <p className="text-[10px] font-black uppercase text-surface-500 tracking-widest">Scanning Network...</p>
+             <div className="space-y-3">
+                {isLoading ? (
+                  <div className="text-center py-12">
+                     <div className="w-8 h-8 border-2 border-brand-600 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+                     <p className="text-[10px] font-black uppercase text-surface-500 tracking-widest animate-pulse">Syncing Network...</p>
                   </div>
-                ) : searchResults.length > 0 ? (
-                  searchResults.map((user, idx) => (
-                    <div key={user._id || user.id || `search-${idx}`} className="flex items-center justify-between p-3 rounded-2xl bg-surface-800/50 border border-surface-700 shadow-sm group hover:border-brand-600 transition-all animate-fade-in">
-                       <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-brand-500/10 text-brand-600 flex items-center justify-center font-black text-sm uppercase">
-                             {user.username.charAt(0)}
-                          </div>
-                          <div>
-                             <p className="text-xs font-black text-surface-200 uppercase tracking-tight">{user.username}</p>
-                             <p className="text-[9px] font-bold text-surface-500 uppercase">{user.name}</p>
-                          </div>
-                       </div>
-                       <button 
-                         onClick={() => handleAddFriend(user._id)}
-                         className="p-2.5 rounded-lg bg-brand-500/10 text-brand-500 hover:bg-brand-600 hover:text-white transition-all shadow-sm"
-                         title="Add Friend"
-                       >
-                         <UserPlus size={16} />
-                       </button>
-                    </div>
-                  ))
-                ) : searchQuery.length >= 2 ? (
-                  <div className="text-center py-8">
-                     <p className="text-xs font-bold text-surface-500 italic">No peers found with that handle.</p>
+                ) : (searchQuery.length > 0 ? searchResults : discoveryResults).length > 0 ? (
+                   (searchQuery.length > 0 ? searchResults : discoveryResults).map((searchUser, idx) => {
+                    const isFriend = friends.some(f => f.id === searchUser.id);
+                    const hasSent = friendRequests?.some(r => r.from_id === user?.id && r.to_id === searchUser.id) || searchUser.requestSent;
+                    const hasIncoming = friendRequests?.some(r => r.to_id === user?.id && r.from_id === searchUser.id);
+
+                    return (
+                      <div key={searchUser.id || `search-${idx}`} className="flex items-center justify-between p-4 rounded-3xl bg-surface-900 border border-surface-700 shadow-sm group hover:border-brand-500 transition-all duration-300 animate-fade-in relative overflow-hidden">
+                         {/* Subtle Background Accent */}
+                         <div className="absolute top-0 right-0 w-32 h-32 bg-brand-500/5 blur-3xl -mr-16 -mt-16 group-hover:bg-brand-500/10 transition-all" />
+                         
+                         <div className="flex items-center gap-4 relative z-10">
+                            <div className="relative">
+                              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-surface-800 to-surface-900 border border-surface-700 text-brand-500 flex items-center justify-center font-black text-sm uppercase group-hover:border-brand-500/30 transition-all overflow-hidden">
+                                {searchUser.avatar ? (
+                                  <img src={searchUser.avatar} alt="" className="w-full h-full object-cover" />
+                                ) : (
+                                  searchUser.username?.charAt(0).toUpperCase() || 'U'
+                                )}
+                              </div>
+                              <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-500 border-2 border-surface-950" />
+                            </div>
+
+                            <div className="min-w-0">
+                               <div className="flex items-center gap-2">
+                                 <p className="text-[11px] font-black text-surface-200 uppercase tracking-tight truncate transition-colors group-hover:text-white">@{searchUser.username}</p>
+                                 <div className="w-1 h-1 rounded-full bg-brand-500/40" />
+                                 <p className="text-[8px] font-black text-brand-500 uppercase tracking-widest">{searchUser.xp || 0}XP</p>
+                               </div>
+                               <p className="text-[9px] font-bold text-surface-500 uppercase tracking-wide truncate mt-0.5">{searchUser.name || 'Incognito User'}</p>
+                            </div>
+                         </div>
+
+                         <div className="relative z-10 flex flex-col gap-1.5 shrink-0">
+                           {isFriend ? (
+                             <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center border border-emerald-500/20 shadow-sm">
+                               <Circle size={16} className="fill-emerald-500" />
+                             </div>
+                           ) : hasSent ? (
+                             <div className="w-10 h-10 rounded-xl bg-brand-500/10 text-brand-500 flex items-center justify-center border border-brand-500/20">
+                               <Loader2 size={16} className="animate-spin" />
+                             </div>
+                           ) : hasIncoming ? (
+                             <button className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-lg shadow-emerald-600/20 hover:scale-105 active:scale-95 transition-all">
+                               <UserPlus size={18} />
+                             </button>
+                           ) : (
+                             <button 
+                               onClick={() => handleAddFriend(searchUser.id)}
+                               className="w-10 h-10 rounded-xl bg-surface-950 border border-surface-700 text-surface-400 hover:bg-brand-600 hover:text-white hover:border-brand-600 transition-all shadow-lg flex items-center justify-center group/btn"
+                               title="Add Friend"
+                             >
+                               <UserPlus size={18} className="group-hover/btn:scale-110 transition-transform" />
+                             </button>
+                           )}
+                         </div>
+                      </div>
+                    );
+                   })
+                ) : searchQuery.length >= 1 ? (
+                  <div className="text-center py-12 px-6">
+                     <div className="w-12 h-12 bg-surface-800/50 rounded-2xl flex items-center justify-center mx-auto mb-4 text-surface-600 border border-surface-700">
+                        <X size={20} />
+                     </div>
+                     <p className="text-[10px] font-black uppercase text-surface-400 tracking-widest mb-1">Signal Lost</p>
+                     <p className="text-[9px] font-bold text-surface-500 uppercase">No peers found matching your criteria.</p>
                   </div>
                 ) : (
-                  <div className="text-center py-12 px-6">
-                     <div className="w-12 h-12 bg-surface-800 rounded-2xl flex items-center justify-center mx-auto mb-4 text-surface-600">
-                        <Users size={24} />
+                  <div className="text-center py-16 px-8 bg-surface-900/20 rounded-3xl border border-dashed border-surface-700/50">
+                     <div className="w-14 h-14 bg-surface-800 rounded-2xl flex items-center justify-center mx-auto mb-5 text-surface-600 shadow-inner">
+                        <Users size={28} />
                      </div>
-                     <p className="text-[10px] font-black uppercase text-surface-300 tracking-widest mb-1 italic opacity-60">Expand your collective</p>
-                     <p className="text-[9px] font-bold text-surface-500 uppercase leading-relaxed">Search for other students to compare progress and challenge them.</p>
+                     <p className="text-[11px] font-black uppercase text-surface-200 tracking-[0.2em] mb-2 opacity-80">Collective Void</p>
+                     <p className="text-[9px] font-bold text-surface-500 uppercase leading-relaxed tracking-wider">Expand your network to unlock collaborative features and peer challenges.</p>
                   </div>
                 )}
              </div>
@@ -163,7 +238,7 @@ export default function FriendsPanel({ isOpen, onClose }) {
                 .filter(f => view === 'All' || f.status === 'online')
                 .map((friend, idx) => (
                 <div
-                  key={friend._id || friend.id || `friend-${idx}`}
+                  key={friend.id || `friend-${idx}`}
                   className="group relative p-3 rounded-2xl bg-surface-800/50 hover:bg-surface-800 transition-all duration-200 border border-surface-700 shadow-sm animate-fade-in"
                 >
                   <div className="flex items-center gap-4">
@@ -218,15 +293,25 @@ export default function FriendsPanel({ isOpen, onClose }) {
       </div>
 
       {/* My Status */}
-      <div className="p-6 bg-surface-950/50 border-t border-surface-700 shrink-0">
+      <div className="p-6 bg-surface-950/80 backdrop-blur-xl border-t border-surface-700 shrink-0">
          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-               <div className="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center border border-emerald-500/20 shadow-sm">
-                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+            <div className="flex items-center gap-4">
+               <div className="relative">
+                  <div className="w-10 h-10 rounded-2xl bg-surface-900 border border-surface-700 flex items-center justify-center text-xs font-black text-brand-500 overflow-hidden shadow-inner">
+                     {user?.user_metadata?.avatar || user?.avatar ? (
+                       <img src={user.user_metadata?.avatar || user.avatar} alt="" className="w-full h-full object-cover" />
+                     ) : (
+                       user?.user_metadata?.username?.charAt(0).toUpperCase() || 'U'
+                     )}
+                  </div>
+                  <div className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-surface-950 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
                </div>
-               <div className="space-y-0.5 font-sans">
-                  <p className="text-[10px] font-black text-surface-200 uppercase tracking-widest">Transmitting</p>
-                  <p className="text-[9px] font-bold text-surface-500 uppercase">Status: Online</p>
+               <div className="space-y-0.5">
+                  <p className="text-[10px] font-black text-surface-200 uppercase tracking-[0.2em]">{user?.user_metadata?.username || 'Pilot'}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-[9px] font-bold text-emerald-500 uppercase tracking-widest">Active Signal</p>
+                    <div className="w-1 h-1 rounded-full bg-emerald-500 animate-ping" />
+                  </div>
                </div>
             </div>
          </div>

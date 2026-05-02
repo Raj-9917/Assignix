@@ -4,9 +4,9 @@ import {
   School,
   Code2,
   ClipboardList,
-  Dumbbell,
+  Zap,
   Users,
-  Swords,
+  Trophy,
   TrendingUp,
   ChevronLeft,
   ChevronRight,
@@ -18,11 +18,11 @@ import { useAuth } from '../../context/AuthContext'
 const navItems = [
   { label: 'Dashboard',   path: '/dashboard',   icon: LayoutDashboard },
   { label: 'Classrooms',  path: '/classrooms',  icon: School },
-  { label: 'Problems',    path: '/problems',    icon: Code2 },
+  { label: 'Prepare',    path: '/prepare',    icon: Code2 },
   { label: 'Assignments', path: '/assignments', icon: ClipboardList },
-  { label: 'Practice',    path: '/practice',    icon: Dumbbell },
+  { label: 'Training Grounds', path: '/practice',    icon: Zap },
   { label: 'Friends',     path: '/friends',     icon: Users },
-  { label: 'Challenges',  path: '/challenge',   icon: Swords },
+  { label: 'Challenges',  path: '/challenge',   icon: Trophy },
   { label: 'Progress',    path: '/progress',    icon: TrendingUp },
 ]
 
@@ -60,7 +60,9 @@ export default function Sidebar({ collapsed, onToggle }) {
 
       {/* ── Navigation ───────────────────────── */}
       <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-1">
-        {finalNavItems.map(({ label, path, icon: Icon }) => {
+        {finalNavItems.map((item) => {
+          const { label, path } = item;
+          const Icon = item.icon;
           const isActive = location.pathname === path || location.pathname.startsWith(path + '/')
           return (
             <NavLink

@@ -1,45 +1,86 @@
 import { useState, useEffect, useMemo } from 'react'
-import { TrendingUp, Flame, Target, Award, Rocket, CheckCircle2, AlertCircle, Zap, Swords } from 'lucide-react'
+import { TrendingUp, Flame, Target, Award, Rocket, CheckCircle2, AlertCircle, Zap, Swords, Loader2 } from 'lucide-react'
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis
 } from 'recharts'
 import PageShell from '../../components/ui/PageShell'
-import { problems } from '../../data/problems'
-import { activityHistory, mockMilestones } from '../../data/progress'
+import { mockMilestones } from '../../data/progress'
+import { useAuth } from '../../context/AuthContext'
+import { submissionService } from '../../services/submissionService'
+import { problemService } from '../../services/problemService'
+import { supabase } from '../../config/supabaseClient'
 
 export default function Progress() {
-  const [solvedIds, setSolvedIds] = useState([])
+  const { user, refreshUser } = useAuth()
+  const [dbStats, setDbStats] = useState(null)
+  const [allProblems, setAllProblems] = useState([])
+  const [activityHistory, setActivityHistory] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  const solvedIds = useMemo(() => {
+    if (!dbStats?.solvedIds) return []
+    return dbStats.solvedIds.map(id => id.toString())
+  }, [dbStats?.solvedIds])
 
   useEffect(() => {
-    const solved = JSON.parse(localStorage.getItem('solved_problems') || '[]')
-    setSolvedIds(solved)
-  }, [])
+    const fetchData = async () => {
+      if (!user?.id) return;
+      
+      try {
+        setLoading(true)
+        const [statsData, problemsData, historyData] = await Promise.all([
+          submissionService.getStats(),
+          problemService.getAllProblems(),
+          submissionService.getActivityHistory()
+        ])
+        
+        const { data: userSubmissions } = await supabase
+          .from('submissions')
+          .select('problem_id')
+          .eq('user_id', user.id)
+          .eq('status', 'Accepted');
+          
+        const solvedIds = [...new Set((userSubmissions || []).map(s => s.problem_id))];
+        
+        setDbStats({ ...statsData, solvedIds });
+        setAllProblems(problemsData)
+        setActivityHistory(historyData)
+      } catch (err) {
+        console.error('Failed to fetch progress data:', err)
+      } finally {
+        setLoading(false)
+      }
+    }
+    fetchData()
+  }, [user?.id, refreshUser]) // Now safe to depend on refreshUser
 
   // 1. Calculate Category Mastery (Radar Chart)
   const categoryMastery = useMemo(() => {
-    const categories = [...new Set(problems.map(p => p.category))]
+    if (!allProblems || allProblems.length === 0) return []
+    const categories = [...new Set(allProblems.map(p => p.category))]
     return categories.map(cat => {
-      const total = problems.filter(p => p.category === cat).length
-      const solved = problems.filter(p => p.category === cat && solvedIds.includes(p.id)).length
+      const total = allProblems.filter(p => p.category === cat).length
+      const solved = allProblems.filter(p => p.category === cat && solvedIds.includes(p.id)).length
       return { 
         subject: cat, 
-        A: Math.round((solved / total) * 100),
+        A: total > 0 ? Math.round((solved / total) * 100) : 0,
         fullMark: 100 
       }
     })
-  }, [solvedIds])
+  }, [allProblems, solvedIds])
 
   // 2. Identify Weak Areas (< 30% completion)
   const weakAreas = categoryMastery
-    .filter(m => m.A < 30)
+    .filter(m => m.A < 40) // Raised threshold to 40%
     .sort((a, b) => a.A - b.A)
     .slice(0, 3)
 
   // 3. Stats Aggregation
   const totalSolved = solvedIds.length
-  const accuracy = totalSolved > 0 ? 82 : 0 // Mock accuracy %
-  const currentStreak = totalSolved > 0 ? 5 : 0 // Mock streak
+  const accuracy = dbStats?.accuracyRate || 0
+  const currentStreak = user?.streak || 0
+  const xp = user?.xp || 0
 
   return (
     <PageShell
@@ -47,14 +88,20 @@ export default function Progress() {
       subtitle="Track your coding practice and achievements."
       icon={TrendingUp}
     >
-      <div className="space-y-10 pb-20">
+      {loading ? (
+        <div className="flex flex-col items-center justify-center py-60 gap-4">
+           <Loader2 size={64} className="animate-spin text-brand-600 opacity-20" />
+           <p className="text-[10px] font-black text-surface-500 uppercase tracking-widest leading-none">Fetching performance metrics...</p>
+        </div>
+      ) : (
+        <div className="space-y-10 pb-20">
         {/* Core Metrics Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
            {[
               { label: 'Total Solved', val: totalSolved, icon: CheckCircle2, color: 'text-emerald-600', bg: 'bg-emerald-50' },
               { label: 'Accuracy Rate', val: `${accuracy}%`, icon: Target, color: 'text-brand-600', bg: 'bg-brand-50' },
               { label: 'Current Streak', val: `${currentStreak} Days`, icon: Flame, color: 'text-amber-600', bg: 'bg-amber-50' },
-              { label: 'Global Rank', val: '#1,242', icon: Swords, color: 'text-purple-600', bg: 'bg-purple-50' }
+              { label: 'Global Rank', val: 'Unranked', icon: Swords, color: 'text-purple-600', bg: 'bg-purple-50' }
            ].map((stat, i) => (
               <div key={i} className="p-8 rounded-[2.5rem] bg-white border border-surface-700 shadow-sm group hover:border-brand-500/30 transition-all hover:shadow-xl hover:shadow-brand-500/5">
                  <div className={`w-14 h-14 rounded-2xl ${stat.bg} ${stat.color} flex items-center justify-center mb-8 shadow-sm border border-black/5`}>
@@ -71,8 +118,8 @@ export default function Progress() {
         {/* Charts & Analytics Section */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
            {/* Activity History Area Chart */}
-           <div className="lg:col-span-8 p-12 rounded-[3.5rem] bg-white border border-surface-700 shadow-sm relative overflow-hidden group hover:shadow-xl hover:shadow-brand-500/5 transition-all">
-              <div className="flex items-center justify-between mb-12">
+           <div className="lg:col-span-8 p-6 sm:p-12 rounded-[2rem] sm:rounded-[3.5rem] bg-white border border-surface-700 shadow-sm relative overflow-hidden group hover:shadow-xl hover:shadow-brand-500/5 transition-all">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-8 sm:mb-12 gap-4">
                  <div className="space-y-2">
                     <h4 className="text-2xl font-black text-surface-300 uppercase tracking-tight">Your Activity</h4>
                     <p className="text-[10px] font-black text-surface-500 uppercase tracking-widest italic">Historical problem solving activity</p>
@@ -83,6 +130,7 @@ export default function Progress() {
                  </div>
               </div>
               <div className="h-80 w-full">
+                 {activityHistory && activityHistory.length > 0 ? (
                  <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={activityHistory}>
                        <defs>
@@ -109,16 +157,22 @@ export default function Progress() {
                        />
                     </AreaChart>
                  </ResponsiveContainer>
+                 ) : (
+                    <div className="h-full w-full flex items-center justify-center border-2 border-dashed border-surface-200 rounded-3xl">
+                       <p className="text-[10px] font-black text-surface-400 uppercase tracking-widest text-center">No activity data to display.<br/>Start solving problems to populate chart.</p>
+                    </div>
+                 )}
               </div>
            </div>
 
            {/* Category Mastery Radar Chart */}
-           <div className="lg:col-span-4 p-12 rounded-[3.5rem] bg-white border border-surface-700 shadow-sm hover:shadow-xl hover:shadow-brand-500/5 transition-all">
-              <div className="space-y-2 mb-12">
-                 <h4 className="text-2xl font-black text-surface-300 uppercase tracking-tight">Skills Breakdown</h4>
+           <div className="lg:col-span-4 p-6 sm:p-12 rounded-[2rem] sm:rounded-[3.5rem] bg-white border border-surface-700 shadow-sm hover:shadow-xl hover:shadow-brand-500/5 transition-all">
+              <div className="space-y-2 mb-8 sm:mb-12">
+                 <h4 className="text-xl sm:text-2xl font-black text-surface-300 uppercase tracking-tight">Skills Breakdown</h4>
                  <p className="text-[10px] font-black text-surface-500 uppercase tracking-widest italic">Proficiency by category</p>
               </div>
               <div className="h-80 w-full">
+                 {categoryMastery && categoryMastery.length > 0 ? (
                  <ResponsiveContainer width="100%" height="100%">
                     <RadarChart cx="50%" cy="50%" outerRadius="80%" data={categoryMastery}>
                        <PolarGrid stroke="#e2e8f0" />
@@ -133,6 +187,11 @@ export default function Progress() {
                        />
                     </RadarChart>
                  </ResponsiveContainer>
+                 ) : (
+                    <div className="h-full w-full flex items-center justify-center border-2 border-dashed border-surface-200 rounded-3xl">
+                       <p className="text-[10px] font-black text-surface-400 uppercase tracking-widest text-center">No skills data available.<br/>Complete challenges to see breakdown.</p>
+                    </div>
+                 )}
               </div>
            </div>
         </div>
@@ -169,8 +228,8 @@ export default function Progress() {
                  <Award size={28} className="text-brand-600" strokeWidth={2.5} />
                  <h4 className="text-2xl font-black text-surface-300 uppercase tracking-tight">Achievements</h4>
               </div>
-              <div className="grid grid-cols-2 gap-5">
-                 {mockMilestones.map((milestone) => (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                 {mockMilestones.length > 0 ? mockMilestones.map((milestone) => (
                     <div key={milestone.id} className={`p-5 rounded-[2rem] border transition-all ${
                        milestone.status === 'unlocked' 
                        ? 'bg-brand-50 border-brand-200' 
@@ -189,11 +248,16 @@ export default function Progress() {
                           <p className="text-[10px] text-surface-500 font-bold leading-relaxed pt-1 uppercase opacity-60 tracking-tighter">{milestone.description}</p>
                        </div>
                     </div>
-                 ))}
+                 )) : (
+                    <div className="col-span-2 py-12 text-center text-surface-500 font-black uppercase tracking-widest text-[10px] opacity-40 italic">
+                       No achievements recorded yet.
+                    </div>
+                 )}
               </div>
            </div>
         </div>
       </div>
+      )}
     </PageShell>
   )
 }

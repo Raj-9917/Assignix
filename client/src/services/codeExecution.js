@@ -1,5 +1,4 @@
-import axios from 'axios';
-
+// Using native fetch to avoid axios dependency
 const API_URL = import.meta.env.VITE_ONECOMPILER_API_URL || 'https://onecompiler-apis.p.rapidapi.com/api/v1/run';
 const API_KEY = import.meta.env.VITE_RAPIDAPI_KEY;
 const API_HOST = import.meta.env.VITE_RAPIDAPI_HOST || 'onecompiler-apis.p.rapidapi.com';
@@ -28,9 +27,10 @@ export const executeCode = async (code, language, stdin = '') => {
   }
 
   try {
-    const response = await axios.post(
-      API_URL,
-      {
+    const response = await fetch(API_URL, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
         language: languageId,
         stdin: stdin,
         files: [
@@ -39,11 +39,14 @@ export const executeCode = async (code, language, stdin = '') => {
             content: code,
           },
         ],
-      },
-      { headers }
-    );
+      })
+    });
 
-    const data = response.data;
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const data = await response.json();
 
     // OneCompiler direct response mapping
     return {
@@ -58,12 +61,12 @@ export const executeCode = async (code, language, stdin = '') => {
       memory: 'N/A', // OneCompiler doesn't typically provide memory usage
     };
 
-  } catch (error) {
-    console.error('OneCompiler execution failed:', error);
+  } catch (err) {
+    console.error('OneCompiler execution failed:', err);
     return {
       success: false,
       stdout: '',
-      stderr: error.response?.data?.message || error.message || 'Submission failed.',
+      stderr: err.message || 'Submission failed.',
       exitCode: -1,
       status: { description: 'API Error' }
     };

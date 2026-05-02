@@ -1,238 +1,338 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword, 
-  onAuthStateChanged, 
-  signOut,
-  getIdToken
-} from 'firebase/auth'
-import { auth } from '../lib/firebase'
-import API_URL from '../config/api'
+import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { supabase } from '../config/supabaseClient';
 
-const AuthContext = createContext()
+const AuthContext = createContext();
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null)
-  const [token, setToken] = useState(localStorage.getItem('assignix_token'))
-  const [loading, setLoading] = useState(true)
-  const navigate = useNavigate()
-  const [friends, setFriends] = useState([])
-  const [notifications, setNotifications] = useState([])
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
 
-  const fetchNotifications = useCallback(async (authToken) => {
-    const activeToken = authToken || token;
-    if (!activeToken) return;
+  const fetchUserProfile = useCallback(async (userId, forceLoading = false) => {
+    if (forceLoading) setLoading(true);
     try {
-      const response = await fetch(`${API_URL}/auth/notifications`, {
-        headers: { 'Authorization': `Bearer ${activeToken}` }
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setNotifications(Array.isArray(data) ? data : []);
+      // Use a single join query to fetch profile, friends, and pending requests
+      const { data: profile, error: profileError } = await supabase
+        .from('users')
+        .select(`
+          *,
+          friendships:friendships!friendships_user_id_fkey(
+            friend:users!friendships_friend_id_fkey(id, name, username, avatar, role, xp, streak)
+          ),
+          sent_requests:friend_requests!friend_requests_from_id_fkey(
+            *,
+            sender:users!friend_requests_from_id_fkey(id, name, username, avatar),
+            receiver:users!friend_requests_to_id_fkey(id, name, username, avatar)
+          ),
+          received_requests:friend_requests!friend_requests_to_id_fkey(
+            *,
+            sender:users!friend_requests_from_id_fkey(id, name, username, avatar),
+            receiver:users!friend_requests_to_id_fkey(id, name, username, avatar)
+          )
+        `)
+        .eq('id', userId)
+        .eq('sent_requests.status', 'pending')
+        .eq('received_requests.status', 'pending')
+        .single();
+        
+      if (profileError && profileError.code !== 'PGRST116') {
+        throw profileError;
       }
-    } catch (error) {
-      console.error('Fetch notifications failed:', error);
-      setNotifications([]);
-    }
-  }, [token]);
 
-  const fetchFriends = useCallback(async (authToken) => {
-    const activeToken = authToken || token;
-    if (!activeToken) return;
-    try {
-      const response = await fetch(`${API_URL}/auth/profile`, {
-        headers: { 'Authorization': `Bearer ${activeToken}` }
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setFriends(Array.isArray(data.friends) ? data.friends : []);
-      }
+      // Process friends from the join result
+      const detailedFriends = profile?.friendships?.map(f => f.friend).filter(Boolean) || [];
+
+      // Process and merge pending requests (both incoming and outgoing)
+      const requests = [
+        ...(profile?.sent_requests || []),
+        ...(profile?.received_requests || [])
+      ];
+      
+      const userData = profile ? { 
+        ...profile, 
+        id: userId, 
+        friends: detailedFriends,
+        friendRequests: requests,
+        notifications: [] // Will be fetched separately
+      } : { 
+        id: userId, 
+        role: 'student', 
+        friends: [], 
+        friendRequests: [],
+        notifications: []
+      };
+
+      setUser(userData);
+      // We don't call fetchNotifications here directly to keep this stable, 
+      // but the useEffect will handle initial load
     } catch (error) {
-      console.error('Fetch friends failed:', error);
-      setFriends([]);
+      console.error('Error fetching user profile:', error);
+      if (userId) {
+        setUser(prev => prev || { id: userId, friends: [], friendRequests: [], notifications: [] });
+      }
+    } finally {
+      setLoading(false);
     }
-  }, [token]);
+  }, []); // Stable reference
+
+
+
+  const login = useCallback(async (email, password) => {
+    try {
+      const { data: authData, error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) return { success: false, message: error.message };
+      
+      // Fetch profile to get role for immediate redirection
+      const { data: profile } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', authData.user.id)
+        .single();
+        
+      const fullUser = { ...profile, ...authData.user, role: profile?.role || 'student' };
+      setUser(fullUser); // Force immediate state update
+      setLoading(false);
+      return { success: true, user: fullUser };
+    } catch (error) {
+      return { success: false, message: error.message };
+    }
+  }, []);
+
+  const register = useCallback(async (name, username, email, password, role = 'student') => {
+    try {
+      // 1. Check if username is already taken
+      const { data: existingUser, error: checkError } = await supabase
+        .from('users')
+        .select('username')
+        .eq('username', username)
+        .maybeSingle();
+
+      if (checkError) return { success: false, message: 'Error checking username availability' };
+      if (existingUser) return { success: false, message: 'Username is already taken' };
+
+      // 2. Sign up with metadata for the trigger
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            name,
+            username,
+            role
+          }
+        }
+      });
+      
+      if (error) return { success: false, message: error.message };
+      return { success: true };
+    } catch (error) {
+      return { success: false, message: error.message };
+    }
+  }, []);
+
+  const logout = useCallback(async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+    navigate('/login');
+  }, [navigate]);
+
+  const updateProfile = useCallback(async (updateData) => {
+    if (!user) return { success: false, message: 'Not logged in' };
+    try {
+      const { error } = await supabase
+        .from('users')
+        .update(updateData)
+        .eq('id', user.id);
+        
+      if (error) return { success: false, message: error.message };
+      
+      setUser(prev => ({ ...prev, ...updateData }));
+      return { success: true };
+    } catch (error) {
+      return { success: false, message: error.message };
+    }
+  }, [user]);
+
+  const refreshUser = useCallback(async (newData = null) => {
+    if (newData) {
+      setUser(prev => prev ? { ...prev, ...newData } : prev);
+    } else if (user?.id) {
+      await fetchUserProfile(user.id);
+    }
+  }, [user?.id, fetchUserProfile]);
+
+  // Friend System Logic
+  const sendFriendRequest = useCallback(async (friendId) => {
+     if (!user?.id) return { success: false };
+     const { error } = await supabase
+       .from('friend_requests')
+       .insert({ from_id: user.id, to_id: friendId, status: 'pending' });
+     if (error) console.error('Friend Request Error:', error);
+     return error ? { success: false, message: error.message } : { success: true, message: 'Request sent' };
+  }, [user?.id]);
+
+  const acceptFriendRequest = useCallback(async (requestId) => {
+      try {
+        // Now handled by database trigger tr_handle_friend_request_acceptance
+        const { error } = await supabase
+          .from('friend_requests')
+          .update({ status: 'accepted' })
+          .eq('id', requestId);
+        
+        if (error) throw error;
+
+        await fetchUserProfile(user.id);
+        return { success: true, message: 'Friend request accepted' };
+      } catch (error) {
+        return { success: false, message: error.message };
+      }
+  }, [user?.id, fetchUserProfile]);
+
+  const rejectFriendRequest = useCallback(async (requestId) => {
+      if (!user?.id) return { success: false };
+      const { error } = await supabase.from('friend_requests').delete().eq('id', requestId);
+      if (error) return { success: false, message: error.message };
+      await fetchUserProfile(user.id);
+      return { success: true, message: 'Friend request rejected' };
+  }, [user?.id, fetchUserProfile]);
+
+  const removeFriend = useCallback(async (friendId) => {
+      if (!user?.id) return { success: false };
+      try {
+        // Both friendships (A->B and B->A) and the 'friends' arrays are cleaned up
+        // automatically by the database trigger 'on_friendship_deleted'.
+        const { error } = await supabase
+          .from('friendships')
+          .delete()
+          .match({ user_id: user.id, friend_id: friendId });
+
+        if (error) throw error;
+
+        // Also delete the reverse row to be thorough (since we insert both ways)
+        await supabase
+          .from('friendships')
+          .delete()
+          .match({ user_id: friendId, friend_id: user.id });
+
+        await fetchUserProfile(user.id);
+        return { success: true, message: 'Friend removed' };
+      } catch (error) {
+        return { success: false, message: error.message };
+      }
+  }, [user?.id, fetchUserProfile]);
+
+  const fetchNotifications = useCallback(async (userIdOverride) => {
+     const targetId = userIdOverride || user?.id;
+     if (!targetId) return;
+     
+     try {
+       const { data, error } = await supabase
+         .from('notifications')
+         .select('*')
+         .eq('user_id', targetId)
+         .order('created_at', { ascending: false });
+       
+       if (!error && data) {
+         const formattedNotifs = data.map(n => ({
+           ...n,
+           time: new Date(n.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+           date: new Date(n.created_at).toLocaleDateString()
+         }));
+         setUser(prev => prev ? ({ ...prev, notifications: formattedNotifs }) : prev);
+       }
+     } catch (err) {
+       console.error('Error fetching notifications:', err);
+     }
+  }, [user?.id]);
 
   const markAllNotificationsRead = useCallback(async () => {
-    if (!token) return;
-    try {
-      const response = await fetch(`${API_URL}/auth/notifications/read`, {
-        method: 'PUT',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (response.ok) {
-        setNotifications(prev => prev.map(n => ({ ...n, read: true })));
-      }
-    } catch (error) {
-      console.error('Mark read failed:', error);
-    }
-  }, [token]);
+     if (!user) return;
+     const { error } = await supabase.from('notifications').update({ read: true }).eq('user_id', user.id);
+     if (!error) fetchNotifications();
+  }, [user, fetchNotifications]);
 
-  const addFriend = useCallback(async (friendId) => {
-    if (!token) return { success: false };
-    try {
-      const response = await fetch(`${API_URL}/auth/friends/add`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ friendId })
-      });
-      if (response.ok) {
-        await fetchFriends();
-        return { success: true };
-      }
-      return { success: false };
-    } catch (error) {
-      console.error('Add friend failed:', error);
-      return { success: false };
-    }
-  }, [token, fetchFriends]);
-
-  // Sync Firebase Auth with Backend Profile
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        try {
-          const idToken = await firebaseUser.getIdToken();
-          setToken(idToken);
-          localStorage.setItem('assignix_token', idToken);
-
-          const response = await fetch(`${API_URL}/auth/profile`, {
-            headers: { 'Authorization': `Bearer ${idToken}` }
-          });
-          
-          if (response.ok) {
-            const userData = await response.json();
-            setUser(userData);
-            setFriends(Array.isArray(userData.friends) ? userData.friends : []);
-            fetchNotifications(idToken);
-          } else {
-            console.error('Failed to sync profile with backend');
-          }
-        } catch (error) {
-          console.error('Auth sync error:', error);
-        }
+    // Check active sessions and sets the user
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        fetchUserProfile(session.user.id, true);
       } else {
-        setUser(null);
-        setToken(null);
-        localStorage.removeItem('assignix_token');
-        setFriends([]);
-        setNotifications([]);
+        setLoading(false);
       }
-      setLoading(false);
     });
 
-    return () => unsubscribe();
-  }, [fetchNotifications, fetchFriends]);
-
-  const login = async (email, password) => {
-    try {
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      const idToken = await userCredential.user.getIdToken();
-      setToken(idToken);
-      localStorage.setItem('assignix_token', idToken);
-      
-      navigate('/dashboard');
-      return { success: true };
-    } catch (error) {
-      console.error('Login error:', error);
-      return { success: false, message: error.message };
-    }
-  };
-
-  const register = async (name, username, email, password, role) => {
-    try {
-      // 1. Create in Firebase
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      const idToken = await userCredential.user.getIdToken();
-      
-      // 2. Initial Register on Backend to create DB record
-      const response = await fetch(`${API_URL}/auth/register`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${idToken}`
-        },
-        body: JSON.stringify({ name, username, email, role })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Registration failed on server');
+    // Listen for changes on auth state
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        fetchUserProfile(session.user.id);
+      } else {
+        setUser(null);
+        setLoading(false);
       }
+    });
 
-      setToken(idToken);
-      localStorage.setItem('assignix_token', idToken);
-      navigate('/dashboard');
-      return { success: true };
-    } catch (error) {
-      console.error('Registration error:', error);
-      return { success: false, message: error.message };
+    // Real-time subscriptions
+    let requestChannel;
+    let notifChannel;
+
+    if (user?.id) {
+      requestChannel = supabase
+        .channel(`friend_requests_${user.id}`)
+        .on('postgres_changes', { 
+          event: '*', 
+          schema: 'public', 
+          table: 'friend_requests',
+          filter: `to_id=eq.${user.id}`
+        }, () => fetchUserProfile(user.id))
+        .on('postgres_changes', { 
+          event: '*', 
+          schema: 'public', 
+          table: 'friend_requests',
+          filter: `from_id=eq.${user.id}`
+        }, () => fetchUserProfile(user.id))
+        .subscribe();
+
+      notifChannel = supabase
+        .channel(`notifications_${user.id}`)
+        .on('postgres_changes', { 
+          event: 'INSERT', 
+          schema: 'public', 
+          table: 'notifications',
+          filter: `user_id=eq.${user.id}`
+        }, () => fetchNotifications())
+        .subscribe();
     }
-  };
 
-  const logout = async () => {
-    try {
-      await signOut(auth);
-      setToken(null);
-      setUser(null);
-      setFriends([]);
-      setNotifications([]);
-      localStorage.removeItem('assignix_token');
-      navigate('/login');
-    } catch (error) {
-      console.error('Logout error:', error);
-    }
-  };
-
-  const updateProfile = async (updateData) => {
-    try {
-      const response = await fetch(`${API_URL}/auth/profile`, {
-        method: 'PUT',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(updateData)
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.message || 'Update failed');
-      }
-
-      const updatedUser = await response.json();
-      setUser(prev => ({ ...prev, ...updatedUser }));
-      return { success: true };
-    } catch (error) {
-      console.error('Update profile error:', error);
-      return { success: false, message: error.message };
-    }
-  };
+    return () => {
+      subscription.unsubscribe();
+      if (requestChannel) supabase.removeChannel(requestChannel);
+      if (notifChannel) supabase.removeChannel(notifChannel);
+    };
+  }, [user?.id, fetchUserProfile, fetchNotifications]);
 
   return (
     <AuthContext.Provider value={{ 
       user, 
-      token,
       login, 
       register, 
       logout, 
-      updateProfile, 
-      loading,
-      friends,
-      notifications,
-      fetchFriends,
+      updateProfile,
+      refreshUser,
+      sendFriendRequest,
+      acceptFriendRequest,
+      rejectFriendRequest,
+      removeFriend,
       fetchNotifications,
-      addFriend,
       markAllNotificationsRead,
-      setNotifications
+      loading,
+      friends: user?.friends || [],
+      notifications: user?.notifications || []
     }}>
       {!loading && children}
     </AuthContext.Provider>
-  );
+  )
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useAuth = () => useContext(AuthContext)
