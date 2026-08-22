@@ -1,0 +1,19 @@
+{
+  "name": "assignix-server",
+  "version": "1.0.0",
+  "description": "Assignix Backend API and Supabase Keep-Alive Service",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js",
+    "keepalive": "node keepalive.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.105.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "node-cron": "^3.0.3"
+  }
+}

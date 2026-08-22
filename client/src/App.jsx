@@ -37,11 +37,13 @@ import AdminPractice    from './pages/admin/AdminPractice'
 import AdminSettings    from './pages/admin/AdminSettings'
 
 import { Settings as SettingsIcon } from 'lucide-react'
-
-
+import { useKeepAlive } from './hooks/useKeepAlive'
 
 export default function App() {
   const { user, loading } = useAuth()
+  
+  // Background keep-alive to prevent Supabase instance from sleeping
+  useKeepAlive(15)
 
   if (loading) {
     return (

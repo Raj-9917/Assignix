@@ -90,4 +90,16 @@ Assignix relies heavily on database triggers to ensure a fast, robust, and zero-
 *   **`handle_new_user`**: Listens to Supabase Auth (`auth.users`) to automatically spin up a public profile with safe usernames, streaks, and roles (`student`, `teacher`, `admin`).
 *   **Friendship Integrity**: Bidirectional friend request acceptances and cascade removals are automatically processed at the database layer.
 *   **Submission Guardrails**: Disallows manual client-side manipulation of problem statuses; accepted statuses can only be granted via signed, verified backend execution.
+*   **Supabase Keep-Alive & Health Check**: 24/7 automated GitHub Actions cron, Edge Function, Express API, and client keepalive to prevent free-tier project pausing. See [SUPABASE_HEALTH_CHECK_GUIDE.md](SUPABASE_HEALTH_CHECK_GUIDE.md).
+
+---
+
+## 🩺 Supabase Health Check & Keep-Alive
+
+To keep your Supabase database and Edge Functions awake 24/7 without sleeping or pausing:
+* **GitHub Actions Workflow**: Runs every 20 minutes automatically ([`.github/workflows/supabase-keepalive.yml`](.github/workflows/supabase-keepalive.yml)). Add `SUPABASE_URL` and `SUPABASE_ANON_KEY` to GitHub repository secrets.
+* **Edge Function API**: [`supabase/functions/health-check/index.ts`](supabase/functions/health-check/index.ts)
+* **Express Server API**: `GET /api/health` & `GET /api/keepalive`
+* **Complete Setup Guide**: Read [`SUPABASE_HEALTH_CHECK_GUIDE.md`](SUPABASE_HEALTH_CHECK_GUIDE.md) for full instructions.
+
 
